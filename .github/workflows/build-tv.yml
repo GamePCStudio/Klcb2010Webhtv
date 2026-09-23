@@ -1,6 +1,7 @@
 name: Build TV (Klcb2010Webhtv)
 
 # 在 klcb2010/webhtv 基础上：改包名为 com.Klcb.android.webhtv、App 名为 K影视，
+# 默认壁纸改为「紫雾星旋」、图片大小默认「中」、去掉开机 splash，
 # 只编译 TV(leanback) 版：arm64-v8a + armeabi-v7a，release 用 debug 密钥签名（可直接 sideload）。
 # 每次 push 到 main 或手动 workflow_dispatch 都会重新从上游拉最新代码构建。
 
@@ -66,6 +67,30 @@ jobs:
           grep -rn "$OLD" app/src/main/AndroidManifest.xml || echo "OK: manifest 已无旧包名"
           echo "=== app_name 现在的值 ==="
           grep -rn 'name="app_name"' app/src/main/res/values/strings.xml | head
+
+      - name: Apply Klcb customizations (wallpaper / image size / no splash)
+        run: |
+          set -e
+          cd src
+          BASE=app/src/main/java/com/Klcb/android/webhtv
+
+          # 1) 默认壁纸改为「紫雾星旋」(WALL_VIOLET_SMOKE = 27)
+          sed -i 's/Prefers.getInt("wall", WALL_DREAM_PURPLE)/Prefers.getInt("wall", WALL_VIOLET_SMOKE)/' \
+            "$BASE/setting/Setting.java"
+
+          # 2) 图片大小默认改为「中」(Medium = select_size 索引 1；原为 Large=2)
+          sed -i 's/Prefers.getInt("size", 2)/Prefers.getInt("size", 1)/' \
+            "$BASE/setting/PlayerSetting.java"
+
+          # 3) 去掉开机 splash：HomeActivity 的 Theme.Splash -> Theme.App（移除启动图背景）
+          for m in app/src/leanback/AndroidManifest.xml app/src/mobile/AndroidManifest.xml; do
+            sed -i 's#android:theme="@style/Theme.Splash"#android:theme="@style/Theme.App"#' "$m"
+          done
+
+          echo "=== 校验改动 ==="
+          grep -n 'Prefers.getInt("wall"' "$BASE/setting/Setting.java"
+          grep -n 'Prefers.getInt("size"' "$BASE/setting/PlayerSetting.java"
+          grep -n 'Theme.Splash\|Theme.App' app/src/leanback/AndroidManifest.xml app/src/mobile/AndroidManifest.xml
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
