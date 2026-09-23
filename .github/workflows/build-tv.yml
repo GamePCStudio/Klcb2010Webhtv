@@ -1,0 +1,123 @@
+name: Build TV (Klcb2010Webhtv)
+
+# 在 klcb2010/webhtv 基础上：改包名为 com.Klcb.android.webhtv、App 名为 K影视，
+# 只编译 TV(leanback) 版：arm64-v8a + armeabi-v7a，release 用 debug 密钥签名（可直接 sideload）。
+# 每次 push 到 main 或手动 workflow_dispatch 都会重新从上游拉最新代码构建。
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "klcb2010/webhtv 的 ref（分支/标签/commit）"
+        required: false
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  build-tv:
+    name: Build leanback TV APKs (TV only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout upstream source (klcb2010/webhtv)
+        uses: actions/checkout@v4
+        with:
+          repository: klcb2010/webhtv
+          ref: ${{ inputs.upstream_ref || 'main' }}
+          fetch-depth: 1
+          path: src
+
+      - name: Rename package & app name
+        run: |
+          set -e
+          cd src
+          OLD='com.fongmi.android.tv'
+          NEW='com.Klcb.android.webhtv'
+          OLD_ESC=$(printf '%s' "$OLD" | sed 's/[.[\*^$]/\\&/g')
+
+          # 1) 文本文件全局替换包名（排除 .git / third_party，避免动到外部预编译库）
+          grep -rIl --exclude-dir=.git --exclude-dir=third_party \
+            --include='*.java' --include='*.kt' --include='*.xml' \
+            --include='*.gradle' --include='*.pro' --include='*.json' \
+            --include='*.txt' --include='*.md' "$OLD" . \
+            | while IFS= read -r f; do sed -i "s#$OLD_ESC#$NEW#g" "$f"; done
+
+          # 2) 重命名 Java 包目录
+          for base in app/src/main/java app/src/androidTest/java app/src/test/java; do
+            if [ -d "$base/com/fongmi/android/tv" ]; then
+              mkdir -p "$base/com/Klcb/android"
+              mv "$base/com/fongmi/android/tv" "$base/com/Klcb/android/webhtv"
+            fi
+          done
+
+          # 3) App 名：TV -> K影视
+          find . -path '*/res/values*/strings.xml' \
+            -exec sed -i 's#\(<string name="app_name">\)[^<]*\(</string>\)#\1K影视\2#' {} +
+
+          echo "=== 校验：manifest 残留旧包名应为空 ==="
+          grep -rn "$OLD" app/src/main/AndroidManifest.xml || echo "OK: manifest 已无旧包名"
+          echo "=== app_name 现在的值 ==="
+          grep -rn 'name="app_name"' app/src/main/res/values/strings.xml | head
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+
+      - name: Install Android packages
+        run: |
+          set -e
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Verify bundled MPV native assets
+        run: |
+          set -e
+          cd src
+          bash scripts/verify_mpv_native_assets.sh || echo "verify 警告（非致命，继续构建）"
+
+      - name: Build leanback TV release APKs (debug-signed)
+        run: |
+          set -e
+          cd src
+          chmod +x ./gradlew
+          ./gradlew :app:assembleLeanbackArm64_v8aRelease :app:assembleLeanbackArmeabi_v7aRelease --no-daemon
+
+      - name: Collect TV APKs
+        run: |
+          set -e
+          cd src
+          rm -rf ../dist
+          mkdir -p ../dist
+          find app/build/outputs/apk -name 'leanback*.apk' -exec cp {} ../dist/ \;
+          ls -lh ../dist
+
+      - name: Upload TV APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-apks
+          path: dist/*.apk
+          if-no-files-found: error
