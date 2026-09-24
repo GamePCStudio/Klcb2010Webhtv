@@ -3,11 +3,10 @@ name: Build TV (Klcb2010Webhtv)
 # 在 klcb2010/webhtv 基础上：改包名为 com.Klcb.android.webhtv、App 名为 K影视，
 # 默认壁纸改为「紫雾星旋」、图片大小默认「中」、去掉开机 splash，
 # 只编译 TV(leanback) 版：arm64-v8a + armeabi-v7a，release 用 debug 密钥签名（可直接 sideload）。
-# 每次 push 到 main 或手动 workflow_dispatch 都会重新从上游拉最新代码构建。
+# 仅手动触发（workflow_dispatch）。修改代码后推送不会自动编译，
+# 需用户通知后再用 `gh workflow run` 触发云端构建。
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       upstream_ref:
